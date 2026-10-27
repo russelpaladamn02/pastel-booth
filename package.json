@@ -1,0 +1,8 @@
+{
+  "name": "pastel-booth",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A pastel online photobooth for friends in different places.",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}
