@@ -56,18 +56,20 @@ async function handleMessage(msg) {
     setStatus('Booth open · waiting for your person');
     for (const peer of msg.peers || []) createPeer(peer.id, peer.name, true);
   } else if (msg.type === 'peer-joined') {
-    // The arriving guest creates the offer to avoid simultaneous negotiation.
+    // Reserve the remote video/peer entry immediately; the new arrival creates the offer.
+    createPeer(msg.peer.id, msg.peer.name, false);
     send({ type: 'room-event', event: 'effect', value: els.effect.value });
+    els.friendState.textContent = `Connecting to ${msg.peer.name}…`;
     showToast(`${msg.peer.name} joined the booth! ♡`);
   } else if (msg.type === 'signal') await receiveSignal(msg);
   else if (msg.type === 'room-event' && msg.event === 'capture') { showToast('Someone started a photo strip — get ready!'); takeStrip(false); }
   else if (msg.type === 'room-event' && msg.event === 'effect') { setEffect(msg.value, false); showToast('Photo effect updated for everyone ✨'); }
-  else if (msg.type === 'peer-left') { const entry = peers.get(msg.id); if (entry) { entry.pc.close(); entry.video.remove(); peers.delete(msg.id); } updateFriendState(); showToast(`${msg.name} left the booth`); }
+  else if (msg.type === 'peer-left') { const entry = peers.get(msg.id); if (entry) { entry.pc.close(); peers.delete(msg.id); } updateFriendState(); showToast(`${msg.name} left the booth`); }
   else if (msg.type === 'error') { showToast(msg.message); els.join.disabled = false; els.join.innerHTML = '<span>♡</span> Create / join booth'; }
 }
 function createPeer(id, name, makeOffer) {
   if (peers.has(id)) return peers.get(id);
-  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun2.l.google.com:19302' }] });
   const transceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
   const video = els.friendVideo;
   const entry = { id, name: name || 'Guest', pc, video, transceiver, candidateQueue: [] };
@@ -89,13 +91,20 @@ function createPeer(id, name, makeOffer) {
     video.onloadedmetadata = () => video.play().catch(() => {});
   };
   pc.onicecandidate = (event) => { if (event.candidate) send({ type: 'signal', to: id, candidate: event.candidate }); };
-  pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') { els.friendState.textContent = 'Connection failed'; showToast('Could not connect cameras. Try refreshing or another network.'); } };
+  pc.onconnectionstatechange = async () => {
+    if (pc.connectionState === 'connected') { els.friendState.textContent = `${entry.name} is here!`; setStatus('Connected · together at last', 'connected'); }
+    if (pc.connectionState === 'failed') {
+      els.friendState.textContent = 'Retrying guest connection…'; setStatus('Connection interrupted · retrying', 'error');
+      try { await pc.restartIce(); } catch (_) {}
+      setTimeout(() => { if (pc.connectionState === 'failed') showToast('The network may need a TURN relay. Try both devices on a different network or refresh both booths.'); }, 2500);
+    }
+  };
   pc.oniceconnectionstatechange = () => { if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') setStatus('Connected · together at last', 'connected'); };
   if (makeOffer) pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => send({ type: 'signal', to: id, description: pc.localDescription })).catch(() => showToast('Could not start the camera connection.'));
   return entry;
 }
 async function receiveSignal(msg) {
-  const entry = createPeer(msg.from, 'Guest', false); const pc = entry.pc;
+  const entry = createPeer(msg.from, peers.get(msg.from)?.name || 'Guest', false); const pc = entry.pc;
   try {
     if (msg.description) {
       await pc.setRemoteDescription(msg.description);
@@ -280,8 +289,8 @@ async function takeStrip(announce = true) {
 function roundedRectPath(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 function roundedRect(ctx,x,y,w,h,r){ctx.fillStyle='#fff';roundedRectPath(ctx,x,y,w,h,r);ctx.fill();}
 
-// Optional MediaPipe hand-gesture stickers. Detection runs locally in the browser.
-let handDetector = null, handDetecting = false, lastGestureAt = 0;
+// Gesture stickers fire only after a pose is held steadily, once per pose.
+let handDetector = null, handDetecting = false, lastGestureAt = 0, candidateGesture = '', candidateFrames = 0, latchedGesture = '';
 function floatSticker(emoji, x = 50, y = 34) {
   const layer = $('selfStickerOverlay'); if (!layer) return;
   const sticker = document.createElement('span'); sticker.className = 'sticker-float';
@@ -290,14 +299,14 @@ function floatSticker(emoji, x = 50, y = 34) {
 }
 function classifyHand(lm) {
   if (!lm || lm.length < 21) return null;
-  const up = (tip, pip) => lm[tip].y < lm[pip].y - .025;
+  const up = (tip, pip) => lm[tip].y < lm[pip].y - .035;
   const index = up(8,6), middle = up(12,10), ring = up(16,14), pinky = up(20,18);
-  const thumbOut = Math.abs(lm[4].x-lm[2].x) > .08;
-  if (index && middle && !ring && !pinky) return { key:'peace', emoji:'💖✨' };
-  if (thumbOut && lm[4].y < lm[3].y && !index && !middle && !ring && !pinky) return { key:'thumb', emoji:'💗👍' };
-  if (index && middle && ring && pinky) return { key:'wave', emoji:'💞👋' };
-  const pinch = Math.hypot(lm[4].x-lm[8].x, lm[4].y-lm[8].y) < .07;
-  if (pinch) return { key:'heart', emoji:'💘💋' };
+  const thumbOut = Math.abs(lm[4].x-lm[2].x) > .09;
+  const pinch = Math.hypot(lm[4].x-lm[8].x, lm[4].y-lm[8].y) < .055;
+  if (pinch) return { key:'kiss-heart', emoji:'💘💋' };
+  if (index && middle && !ring && !pinky) return { key:'peace', emoji:'✌️💖' };
+  if (thumbOut && lm[4].y < lm[3].y && !index && !middle && !ring && !pinky) return { key:'thumb', emoji:'👍💗' };
+  if (index && middle && ring && pinky) return { key:'open-palm', emoji:'👋💞' };
   return null;
 }
 async function startGestureDetection() {
@@ -305,16 +314,23 @@ async function startGestureDetection() {
   handDetecting = true;
   try {
     handDetector = new window.Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    handDetector.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: .62, minTrackingConfidence: .55 });
+    handDetector.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: .7, minTrackingConfidence: .65 });
     handDetector.onResults(results => {
       const lm = results.multiHandLandmarks && results.multiHandLandmarks[0];
-      const gesture = classifyHand(lm); const now = Date.now();
-      if (gesture && now-lastGestureAt > 1700) { lastGestureAt = now; floatSticker(gesture.emoji, lm ? (1-lm[9].x)*100 : 50, lm ? lm[9].y*100 : 35); }
+      const detected = classifyHand(lm); const key = detected?.key || '';
+      if (key === candidateGesture) candidateFrames++; else { candidateGesture = key; candidateFrames = key ? 1 : 0; }
+      // A neutral hand releases the latch, so holding a pose doesn't spam stickers.
+      if (!key) { latchedGesture = ''; return; }
+      const now = Date.now();
+      if (candidateFrames >= 4 && key !== latchedGesture && now-lastGestureAt > 900) {
+        latchedGesture = key; lastGestureAt = now;
+        floatSticker(detected.emoji, (1-lm[9].x)*100, lm[9].y*100);
+      }
     });
     const scan = async () => {
       if (!handDetecting) return;
       if (localStream && els.selfVideo.readyState >= 2 && !els.selfVideo.paused) {
-        try { await handDetector.send({ image: els.selfVideo }); } catch (_) { /* camera may switch while inference is running */ }
+        try { await handDetector.send({ image: els.selfVideo }); } catch (_) {}
       }
       requestAnimationFrame(scan);
     };
