@@ -76,19 +76,39 @@ function createPeer(id, name, makeOffer) {
   peers.set(id, entry);
   if (localStream) transceiver.sender.replaceTrack(localStream.getVideoTracks()[0]);
   pc.ontrack = async (event) => {
-    // Some browsers omit event.streams; construct a stream from the received track.
-    const remoteStream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
+    // Mobile Safari/Chrome can block autoplay for an unmuted remote video, even with no audio.
+    // This booth is video-only, so mute the remote element and enable inline playback.
+    const remoteStream = event.streams && event.streams[0]
+      ? event.streams[0]
+      : (video.srcObject instanceof MediaStream ? video.srcObject : new MediaStream());
+    if (!event.streams?.[0] && !remoteStream.getTracks().some(track => track.id === event.track.id)) {
+      remoteStream.addTrack(event.track);
+    }
+    video.autoplay = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.muted = true;
     video.srcObject = remoteStream;
     const reveal = async () => {
-      video.classList.add('active'); els.friendPlaceholder.classList.add('hidden');
-      els.friendTag.textContent = entry.name; els.friendTag.classList.remove('hidden');
-      els.friendState.textContent = `${entry.name} is here!`;
-      try { await video.play(); } catch (_) { els.friendState.textContent = 'Tap the guest video to play'; }
-      if (!video.paused) setStatus('Connected · together at last', 'connected');
+      video.classList.add('active');
+      els.friendPlaceholder.classList.add('hidden');
+      els.friendTag.textContent = entry.name;
+      els.friendTag.classList.remove('hidden');
+      els.friendState.textContent = `Connecting video…`;
+      try {
+        await video.play();
+        els.friendState.textContent = `${entry.name} is here!`;
+        setStatus('Connected · together at last', 'connected');
+      } catch (error) {
+        // Keep the video element visible; a later canplay/user gesture can retry playback.
+        els.friendState.textContent = 'Tap guest video to play';
+      }
     };
-    event.track.onunmute = reveal;
-    if (!event.track.muted) await reveal();
-    video.onloadedmetadata = () => video.play().catch(() => {});
+    event.track.addEventListener('unmute', reveal);
+    video.onloadedmetadata = reveal;
+    video.oncanplay = reveal;
+    // Reveal immediately rather than waiting forever for an unmute event on mobile.
+    await reveal();
   };
   pc.onicecandidate = (event) => { if (event.candidate) send({ type: 'signal', to: id, candidate: event.candidate }); };
   pc.onconnectionstatechange = async () => {
@@ -115,6 +135,12 @@ async function receiveSignal(msg) {
     }
   } catch (error) { console.error(error); showToast('Camera connection hiccup. Try refreshing both booths.'); }
 }
+els.friendVideo.addEventListener('click', () => {
+  if (els.friendVideo.srcObject) els.friendVideo.play().catch(() => {
+    els.friendState.textContent = 'Video playback blocked — tap again or reload';
+  });
+});
+
 function updateFriendState() {
   if (peers.size === 0) { els.friendVideo.classList.remove('active'); els.friendVideo.srcObject = null; els.friendPlaceholder.classList.remove('hidden'); els.friendTag.classList.add('hidden'); els.friendState.textContent = 'Waiting for someone to join'; setStatus('Booth open · waiting for your person'); }
 }
