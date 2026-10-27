@@ -53,3 +53,10 @@ The app uses WebSockets for signaling, so use a host that supports persistent We
 - If permission was blocked, open Chrome site settings for the site, set Camera to Allow, then reload the page. Close other apps that may be using the camera.
 - **Solo booth** lets you take and save a photo strip without creating a room. **With someone** lets you create a room and share its invite link.
 - On mobile, controls wrap into a two-column layout and the footer respects the device's safe-area inset.
+
+
+## Photo strip customization
+- Each photo uses its own 3-second countdown; choose 3, 4, or 5 shots.
+- After capture, choose mirrored or normal output, classic/grid/wide layout, export size, and a seasonal frame.
+- Seasonal styles include pastel classic, a candy-cane holiday look for the 2027 season, and spooky Halloween decorations with web corners, pumpkin, and distressed scratches.
+- Re-rendering the preview is done locally in the browser; downloads are PNGs and are not uploaded to the server.
