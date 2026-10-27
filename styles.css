@@ -84,3 +84,54 @@ body[data-season="spooky"] .video-wrap{border-color:#6a455d}
 body[data-season="candycane"]{--bg:#fff8f2;--accent:#c83e4d;--accent-dark:#a92e40;--accent-soft:#ffe8e7;--line:#f2d5d2;--glow-one:rgba(255,220,220,.8);--glow-two:rgba(214,242,221,.6)}
 body[data-season="candycane"] .booth-card{border-color:#efc9c8;box-shadow:0 12px 34px rgba(166,53,66,.09)}
 @media(max-width:760px){.strip-editor{max-width:none}.result-copy{min-width:0}.strip-editor select{font-size:12px}}
+
+
+/* Restored, clearly styled Solo / With Someone mode buttons */
+.mode-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 12px}
+.mode-option{appearance:none;-webkit-appearance:none;display:flex;align-items:center;gap:12px;min-width:0;min-height:76px;padding:14px 16px;border:1.5px solid var(--line);border-radius:16px;background:linear-gradient(135deg,#fff,var(--soft-surface));color:var(--ink);text-align:left;cursor:pointer;box-shadow:0 3px 12px rgba(120,85,120,.06);transition:border-color .18s,background .18s,box-shadow .18s,transform .18s}
+.mode-option:hover{transform:translateY(-1px);box-shadow:0 7px 18px rgba(120,85,120,.11)}
+.mode-option.is-selected{border-color:var(--accent);background:linear-gradient(135deg,var(--accent-soft),#fff);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 13%,transparent),0 6px 18px rgba(120,85,120,.08)}
+.mode-option:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.mode-icon{flex:0 0 38px;width:38px;height:38px;display:grid;place-items:center;border-radius:12px;background:var(--lavender);color:var(--accent-dark);font-size:23px}
+.mode-option strong,.mode-option small{display:block}.mode-option strong{font:900 13px 'Nunito',sans-serif;margin-bottom:4px}.mode-option small{font-size:10px;line-height:1.35;color:var(--muted)}
+.mode-hint{margin:0 0 14px;color:var(--muted);font-size:11px;line-height:1.5}
+body[data-mode="solo"] .friend-card,body[data-mode="solo"] .between-badge{display:none}
+body[data-mode="solo"] .booth-grid{grid-template-columns:minmax(0,1fr);max-width:600px;margin-inline:auto}
+body[data-mode="solo"] .self-card .video-wrap{height:clamp(235px,42vw,360px)}
+@media(max-width:600px){.mode-picker{gap:8px}.mode-option{padding:11px 10px;gap:8px;min-height:70px;border-radius:13px}.mode-icon{flex-basis:32px;width:32px;height:32px;font-size:20px}.mode-option strong{font-size:12px}.mode-option small{font-size:9px}.booth-card{padding:20px 16px 18px}}
+
+/* Camera selection, responsive framing, dark mode, and gentle motion polish */
+.header-tools{display:flex;align-items:center;gap:10px}
+.dark-toggle{border:1px solid var(--line);background:var(--soft-surface);color:var(--accent-dark);border-radius:13px;padding:10px 12px;font-size:11px;font-weight:800;cursor:pointer;box-shadow:0 4px 14px rgba(133,92,123,.05);transition:transform .2s,background .25s}
+.dark-toggle:hover{transform:translateY(-2px)}
+.camera-select-control{display:flex;flex-direction:column;gap:5px;min-width:145px}
+.camera-select-control label{font-size:9px;font-weight:800;color:var(--muted)}
+.camera-select-control select{height:42px;max-width:210px;min-width:145px;border:1px solid var(--line);border-radius:12px;background:var(--soft-surface);padding:0 10px;color:var(--ink);font-size:10px;font-weight:800}
+.video-wrap video{object-fit:contain;background:rgba(25,17,31,.06)}
+/* Keep camera proportions on narrow screens instead of zoom-cropping faces. */
+@media(max-width:760px){
+ .video-wrap{height:auto;aspect-ratio:4/3;min-height:0;max-height:none}
+ .video-wrap video{width:100%;height:100%;object-fit:contain}
+ .camera-select-control{grid-column:span 2;width:100%;align-items:stretch}
+ .camera-select-control select{width:100%;max-width:none}
+ .header-tools{gap:6px}.dark-toggle{padding:9px 10px;font-size:10px}
+}
+@media(max-width:430px){.video-wrap{aspect-ratio:4/3;height:auto;min-height:0}.camera-select-control{grid-column:span 2}.header-tools{gap:5px}.dark-toggle{font-size:9px;padding:8px}}
+body[data-dark="true"]{--bg:#211b2a;--ink:#f9edf8;--muted:#c5b2c9;--card:#302638;--line:#514054;--soft-surface:#342a3b;--accent-soft:#4b354e;--lavender:#40344e;--mint:#29443d;--peach:#4a352e;--glow-one:rgba(130,66,105,.28);--glow-two:rgba(100,86,154,.23);--border-soft:rgba(112,82,119,.55);background:radial-gradient(ellipse at 7% 12%,var(--glow-one),transparent 32%),radial-gradient(ellipse at 94% 28%,var(--glow-two),transparent 31%),var(--bg);color:var(--ink)}
+body[data-dark="true"] .topbar,body[data-dark="true"] .booth-card,body[data-dark="true"] .how-section{background:rgba(46,36,54,.94);border-color:var(--line);color:var(--ink)}
+body[data-dark="true"] .brand,body[data-dark="true"] .camera-label,body[data-dark="true"] .steps h3,body[data-dark="true"] .booth-heading h2{color:var(--ink)}
+body[data-dark="true"] .hero-copy>p,body[data-dark="true"] .hero-note,body[data-dark="true"] .steps p,body[data-dark="true"] .privacy-note,body[data-dark="true"] footer{color:var(--muted)}
+body[data-dark="true"] .theme-picker select,body[data-dark="true"] .dark-toggle,body[data-dark="true"] .mode-option,body[data-dark="true"] .field-group input,body[data-dark="true"] .strip-options select,body[data-dark="true"] .effect-control select,body[data-dark="true"] .strip-editor select,body[data-dark="true"] .camera-select-control select{background:#382d40;color:var(--ink);border-color:var(--line)}
+body[data-dark="true"] .mode-option.is-selected{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 24%,#382d40),#382d40);border-color:var(--accent)}
+body[data-dark="true"] .button-light,body[data-dark="true"] .button-small,body[data-dark="true"] #flipCameraButton{background:#382d40;color:var(--accent);border-color:var(--line)}
+body[data-dark="true"] .video-wrap{background:linear-gradient(145deg,#30283a,#292433);border-color:var(--line)}
+body[data-dark="true"] .video-placeholder{color:#d6c5da}body[data-dark="true"] .video-placeholder small{color:#bba8c1}
+body[data-dark="true"] .name-tag{background:rgba(44,33,50,.88);color:#fff0fb}
+body[data-dark="true"] .strip-editor{background:#302638;border-color:var(--line)}body[data-dark="true"] .invite-row{background:#293d36;color:#c4ead5}
+body[data-dark="true"] footer{border-color:var(--line)}body[data-dark="true"] .countdown-bubble{background:#382d40}body[data-dark="true"] .countdown-bubble span,body[data-dark="true"] .countdown-bubble small{color:#d2bfd6}
+/* Tiny floating pastel accents make the page feel lively without covering controls. */
+body:before,body:after{content:'✧';position:fixed;z-index:0;pointer-events:none;color:var(--accent);opacity:.28;font-size:24px;animation:pastel-float 8s ease-in-out infinite}
+body:before{left:3vw;top:28vh}body:after{content:'♡';right:4vw;top:66vh;font-size:20px;animation-delay:-3.5s}
+.page-shell{position:relative;z-index:1}
+@keyframes pastel-float{0%,100%{transform:translate3d(0,0,0) rotate(0deg)}50%{transform:translate3d(0,-16px,0) rotate(12deg)}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}

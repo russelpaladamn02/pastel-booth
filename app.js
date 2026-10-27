@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const els = { theme: $('themeSelect'), effect: $('effectSelect'), room: $('roomInput'), name: $('nameInput'), join: $('joinButton'), camera: $('cameraButton'), capture: $('captureButton'), pill: $('connectionPill'), status: $('connectionText'), roomBar: $('roomBar'), invite: $('inviteRow'), inviteText: $('inviteText'), copy: $('copyButton'), selfVideo: $('selfVideo'), friendVideo: $('friendVideo'), selfPlaceholder: $('selfPlaceholder'), friendPlaceholder: $('friendPlaceholder'), selfState: $('selfState'), friendState: $('friendState'), selfTag: $('selfNameTag'), friendTag: $('friendNameTag'), toast: $('toast'), overlay: $('countdownOverlay'), count: $('countdownNumber'), result: $('resultCard'), resultImage: $('resultImage'), download: $('downloadButton'), retake: $('retakeButton'), flipCamera: $('flipCameraButton'), mirror: $('mirrorToggle'), layout: $('layoutSelect'), size: $('sizeSelect'), shotCount: $('shotCountSelect'), shotsBadge: $('shotsBadge'), stripMirror: $('stripMirrorSelect'), stripStyle: $('stripStyleSelect'), stripLayoutEdit: $('stripLayoutEdit'), stripSizeEdit: $('stripSizeEdit') };
+const els = { theme: $('themeSelect'), effect: $('effectSelect'), room: $('roomInput'), name: $('nameInput'), join: $('joinButton'), camera: $('cameraButton'), capture: $('captureButton'), pill: $('connectionPill'), status: $('connectionText'), roomBar: $('roomBar'), invite: $('inviteRow'), inviteText: $('inviteText'), copy: $('copyButton'), selfVideo: $('selfVideo'), friendVideo: $('friendVideo'), selfPlaceholder: $('selfPlaceholder'), friendPlaceholder: $('friendPlaceholder'), selfState: $('selfState'), friendState: $('friendState'), selfTag: $('selfNameTag'), friendTag: $('friendNameTag'), toast: $('toast'), overlay: $('countdownOverlay'), count: $('countdownNumber'), result: $('resultCard'), resultImage: $('resultImage'), download: $('downloadButton'), retake: $('retakeButton'), flipCamera: $('flipCameraButton'), mirror: $('mirrorToggle'), layout: $('layoutSelect'), size: $('sizeSelect'), shotCount: $('shotCountSelect'), shotsBadge: $('shotsBadge'), stripMirror: $('stripMirrorSelect'), stripStyle: $('stripStyleSelect'), stripLayoutEdit: $('stripLayoutEdit'), stripSizeEdit: $('stripSizeEdit'), cameraSelect: $('cameraSelect'), darkMode: $('darkModeToggle') };
 let socket, localStream, myId, roomCode, peers = new Map(), captureBusy = false, toastTimer, cameraFacing = 'user';
 const effects = {
   natural: { filter: 'none' },
@@ -11,7 +11,50 @@ const effects = {
   hearts: { filter: 'saturate(1.08)' },
   prism: { filter: 'saturate(1.22) hue-rotate(14deg)' }
 };
+
+// Mode picker: keep the two choices as styled buttons and switch the booth UI.
+const soloModeButton = $('soloModeButton');
+const sharedModeButton = $('sharedModeButton');
+const modeHint = $('modeHint');
+let boothMode = 'solo';
+function setBoothMode(mode) {
+  boothMode = mode === 'shared' ? 'shared' : 'solo';
+  document.body.dataset.mode = boothMode;
+  if (soloModeButton) { soloModeButton.classList.toggle('is-selected', boothMode === 'solo'); soloModeButton.setAttribute('aria-pressed', String(boothMode === 'solo')); }
+  if (sharedModeButton) { sharedModeButton.classList.toggle('is-selected', boothMode === 'shared'); sharedModeButton.setAttribute('aria-pressed', String(boothMode === 'shared')); }
+  if (modeHint) modeHint.textContent = boothMode === 'solo'
+    ? 'Solo mode is ready. Turn on your camera to take and customize your photo strip.'
+    : 'With someone mode: use a room code to invite your friend, then turn on your camera.';
+  if (boothMode === 'solo') {
+    els.roomBar.classList.add('hidden');
+    els.invite.classList.add('hidden');
+    if (els.capture) els.capture.innerHTML = '<span>✧</span> Take my photos';
+  } else {
+    if (!myId) els.roomBar.classList.remove('hidden');
+    else els.invite.classList.remove('hidden');
+    if (els.capture) els.capture.innerHTML = '<span>✧</span> Take our photos';
+  }
+}
+if (soloModeButton) soloModeButton.addEventListener('click', () => setBoothMode('solo'));
+if (sharedModeButton) sharedModeButton.addEventListener('click', () => setBoothMode('shared'));
+setBoothMode('solo');
+
 const savedTheme = localStorage.getItem('pastel-booth-theme');
+const savedDarkMode = localStorage.getItem('pastel-booth-dark') === 'true';
+function setDarkMode(enabled) { document.body.dataset.dark = enabled ? 'true' : 'false'; if (els.darkMode) { els.darkMode.setAttribute('aria-pressed', String(enabled)); els.darkMode.textContent = enabled ? '☀ Light mode' : '☾ Dark mode'; } localStorage.setItem('pastel-booth-dark', String(enabled)); }
+setDarkMode(savedDarkMode);
+if (els.darkMode) els.darkMode.addEventListener('click', () => setDarkMode(document.body.dataset.dark !== 'true'));
+let selectedCameraId = '';
+async function refreshCameraOptions(preferredId = '') {
+  if (!els.cameraSelect || !navigator.mediaDevices?.enumerateDevices) return;
+  try { const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); const previous = preferredId || selectedCameraId || els.cameraSelect.value; els.cameraSelect.innerHTML = '';
+    if (!devices.length) { const o = document.createElement('option'); o.value = ''; o.textContent = 'No cameras found'; els.cameraSelect.append(o); els.cameraSelect.disabled = true; return; }
+    devices.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || `Camera ${i + 1}`; els.cameraSelect.append(o); });
+    const target = devices.some(d => d.deviceId === previous) ? previous : (devices.find(d => /front|user|facetime|integrated/i.test(d.label))?.deviceId || devices[0].deviceId);
+    els.cameraSelect.value = target; selectedCameraId = target; els.cameraSelect.disabled = false;
+  } catch (e) { console.warn('Could not list cameras', e); }
+}
+
 const savedMirror = localStorage.getItem('pastel-booth-mirror');
 els.mirror.checked = savedMirror === null ? true : savedMirror === 'true';
 function updateMirrorPreview() { els.selfVideo.classList.toggle('mirror-preview', els.mirror.checked && cameraFacing === 'user'); }
@@ -48,7 +91,7 @@ function setupRoom(room) {
 }
 async function handleMessage(msg) {
   if (msg.type === 'joined') {
-    myId = msg.id; roomCode = msg.room; els.room.value = roomCode; els.roomBar.classList.add('hidden'); els.invite.classList.remove('hidden');
+    myId = msg.id; roomCode = msg.room; els.room.value = roomCode; els.roomBar.classList.add('hidden'); if (boothMode === 'shared') els.invite.classList.remove('hidden');
     els.inviteText.textContent = `Your room ${roomCode} is ready — invite someone to join!`; els.join.disabled = true; els.join.innerHTML = 'Booth is open ♡';
     setStatus('Booth open · waiting for your person');
     for (const peer of msg.peers || []) createPeer(peer.id, peer.name, true);
@@ -101,14 +144,17 @@ async function startCamera() {
   if (!navigator.mediaDevices?.getUserMedia) { showToast('Camera needs HTTPS. Open the secure https:// site in Chrome.'); return; }
   els.camera.disabled = true; els.camera.textContent = 'Opening camera…';
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    const videoConstraints = selectedCameraId ? { deviceId: { exact: selectedCameraId }, width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 4/3 } } : { facingMode: { ideal: cameraFacing }, width: { ideal: 1920 }, height: { ideal: 1080 } };
+    const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
     if (localStream) localStream.getTracks().forEach(track => track.stop());
     localStream = stream;
+    const activeTrack = stream.getVideoTracks()[0]; selectedCameraId = activeTrack?.getSettings?.().deviceId || selectedCameraId; cameraFacing = activeTrack?.getSettings?.().facingMode || cameraFacing;
+    await refreshCameraOptions(selectedCameraId);
     els.selfVideo.srcObject = localStream; els.selfVideo.classList.add('active'); els.selfPlaceholder.classList.add('hidden'); els.selfState.textContent = 'Camera is on';
     updateMirrorPreview();
     const displayName = els.name.value.trim() || 'you'; els.selfTag.textContent = displayName;
     for (const entry of peers.values()) await entry.transceiver.sender.replaceTrack(localStream.getVideoTracks()[0]);
-    els.camera.innerHTML = '<span>✿</span> Camera is on'; els.camera.disabled = false; els.flipCamera.disabled = false; els.capture.disabled = false;
+    els.camera.innerHTML = '<span>✿</span> Camera is on'; els.camera.disabled = false; els.flipCamera.disabled = false; els.capture.disabled = false; if (els.cameraSelect) els.cameraSelect.disabled = false;
     showToast(cameraFacing === 'user' ? 'Front camera on — looking cute already!' : 'Back camera on!');
   } catch (error) {
     console.error(error); els.camera.disabled = false; els.camera.innerHTML = '<span>📷</span> Try camera again';
@@ -117,20 +163,30 @@ async function startCamera() {
   }
 }
 async function switchCamera() {
-  if (!localStream) { cameraFacing = cameraFacing === 'user' ? 'environment' : 'user'; return startCamera(); }
-  cameraFacing = cameraFacing === 'user' ? 'environment' : 'user';
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-    const oldStream = localStream; localStream = stream; els.selfVideo.srcObject = stream;
-    for (const entry of peers.values()) await entry.transceiver.sender.replaceTrack(stream.getVideoTracks()[0]);
-    oldStream.getTracks().forEach(track => track.stop()); updateMirrorPreview();
-    showToast(cameraFacing === 'user' ? 'Front camera selected' : 'Back camera selected');
-  } catch (error) { cameraFacing = cameraFacing === 'user' ? 'environment' : 'user'; showToast('Could not switch camera on this device.'); }
+  if (!navigator.mediaDevices?.getUserMedia) return;
+  if (!localStream) { cameraFacing = cameraFacing === 'user' ? 'environment' : 'user'; selectedCameraId = ''; return startCamera(); }
+  const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  const current = localStream.getVideoTracks()[0]?.getSettings?.().deviceId;
+  const currentIndex = devices.findIndex(d => d.deviceId === current);
+  const next = devices.length > 1 ? devices[(currentIndex + 1 + devices.length) % devices.length] : null;
+  if (next) { selectedCameraId = next.deviceId; if (els.cameraSelect) els.cameraSelect.value = selectedCameraId; }
+  else { cameraFacing = cameraFacing === 'user' ? 'environment' : 'user'; selectedCameraId = ''; }
+  try { await startCamera(); showToast(next ? `Camera changed to ${next.label || 'selected camera'}` : `Switched to ${cameraFacing === 'user' ? 'front' : 'back'} camera`); }
+  catch (e) { showToast('Could not switch camera on this device.'); }
 }
+async function selectCamera() {
+  if (!els.cameraSelect?.value) return;
+  selectedCameraId = els.cameraSelect.value;
+  if (localStream) await startCamera();
+}
+
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 async function frameSnapshot(video) {
   if (!video || !video.srcObject || video.readyState < 2 || !video.videoWidth) return null;
-  const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 420;
+  const canvas = document.createElement('canvas');
+  const sourceW = video.videoWidth || 1280, sourceH = video.videoHeight || 720;
+  const scale = Math.min(1, 1600 / Math.max(sourceW, sourceH));
+  canvas.width = Math.max(1, Math.round(sourceW * scale)); canvas.height = Math.max(1, Math.round(sourceH * scale));
   const ctx = canvas.getContext('2d');
   ctx.save();
   ctx.filter = effects[els.effect.value].filter; ctx.drawImage(video, 0, 0, canvas.width, canvas.height); ctx.restore();
@@ -250,9 +306,10 @@ async function takeStrip(announce = true) {
 for(const control of [els.stripMirror,els.stripStyle,els.stripLayoutEdit,els.stripSizeEdit])if(control)control.addEventListener('change',()=>{if(control===els.stripStyle)document.body.dataset.season=control.value;renderStrip();});
 function roundedRectPath(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 function roundedRect(ctx,x,y,w,h,r){ctx.fillStyle='#fff';roundedRectPath(ctx,x,y,w,h,r);ctx.fill();}
-els.join.addEventListener('click', () => { if (socket && socket.readyState !== WebSocket.CLOSED) return; const room = els.room.value.trim() || randomRoom(); setupRoom(room); });
+els.join.addEventListener('click', () => { setBoothMode('shared'); if (socket && socket.readyState !== WebSocket.CLOSED) return; const room = els.room.value.trim() || randomRoom(); setupRoom(room); });
 if(els.shotCount)els.shotCount.addEventListener('change',()=>{if(els.shotsBadge)els.shotsBadge.textContent=els.shotCount.value;});
-els.camera.addEventListener('click', startCamera); els.flipCamera.addEventListener('click', switchCamera); els.capture.addEventListener('click', takeStrip); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
+els.camera.addEventListener('click', startCamera); els.flipCamera.addEventListener('click', switchCamera); if (els.cameraSelect) els.cameraSelect.addEventListener('change', selectCamera);
+if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', () => refreshCameraOptions()); els.capture.addEventListener('click', takeStrip); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
 els.copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(inviteUrl()); showToast('Invite link copied — send it to your person!'); } catch { prompt('Copy your invite link:', inviteUrl()); } });
 els.room.addEventListener('keydown', e => { if (e.key === 'Enter') els.join.click(); });
 const params = new URLSearchParams(location.search); if (params.has('room')) { els.room.value = params.get('room'); }
