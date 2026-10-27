@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
-const els = { theme: $('themeSelect'), effect: $('effectSelect'), room: $('roomInput'), name: $('nameInput'), join: $('joinButton'), camera: $('cameraButton'), capture: $('captureButton'), pill: $('connectionPill'), status: $('connectionText'), roomBar: $('roomBar'), invite: $('inviteRow'), inviteText: $('inviteText'), copy: $('copyButton'), selfVideo: $('selfVideo'), friendVideo: $('friendVideo'), selfPlaceholder: $('selfPlaceholder'), friendPlaceholder: $('friendPlaceholder'), selfState: $('selfState'), friendState: $('friendState'), selfTag: $('selfNameTag'), friendTag: $('friendNameTag'), toast: $('toast'), overlay: $('countdownOverlay'), count: $('countdownNumber'), result: $('resultCard'), resultImage: $('resultImage'), download: $('downloadButton'), retake: $('retakeButton') };
-let socket, localStream, myId, roomCode, peers = new Map(), captureBusy = false, toastTimer;
+const els = { theme: $('themeSelect'), effect: $('effectSelect'), room: $('roomInput'), name: $('nameInput'), join: $('joinButton'), camera: $('cameraButton'), capture: $('captureButton'), pill: $('connectionPill'), status: $('connectionText'), roomBar: $('roomBar'), invite: $('inviteRow'), inviteText: $('inviteText'), copy: $('copyButton'), selfVideo: $('selfVideo'), friendVideo: $('friendVideo'), selfPlaceholder: $('selfPlaceholder'), friendPlaceholder: $('friendPlaceholder'), selfState: $('selfState'), friendState: $('friendState'), selfTag: $('selfNameTag'), friendTag: $('friendNameTag'), toast: $('toast'), overlay: $('countdownOverlay'), count: $('countdownNumber'), result: $('resultCard'), resultImage: $('resultImage'), download: $('downloadButton'), retake: $('retakeButton'), flipCamera: $('flipCameraButton'), mirror: $('mirrorToggle'), layout: $('layoutSelect'), size: $('sizeSelect') };
+let socket, localStream, myId, roomCode, peers = new Map(), captureBusy = false, toastTimer, cameraFacing = 'user';
 const effects = {
   natural: { filter: 'none' },
   dreamy: { filter: 'brightness(1.08) saturate(1.08) contrast(.96)' },
@@ -12,6 +12,10 @@ const effects = {
   prism: { filter: 'saturate(1.22) hue-rotate(14deg)' }
 };
 const savedTheme = localStorage.getItem('pastel-booth-theme');
+const savedMirror = localStorage.getItem('pastel-booth-mirror');
+els.mirror.checked = savedMirror === null ? true : savedMirror === 'true';
+function updateMirrorPreview() { els.selfVideo.classList.toggle('mirror-preview', els.mirror.checked && cameraFacing === 'user'); }
+els.mirror.addEventListener('change', () => { localStorage.setItem('pastel-booth-mirror', String(els.mirror.checked)); updateMirrorPreview(); });
 if (savedTheme && ['cotton','peach','mint','dreamy'].includes(savedTheme)) { document.body.dataset.theme = savedTheme; els.theme.value = savedTheme; }
 els.theme.addEventListener('change', () => { document.body.dataset.theme = els.theme.value; localStorage.setItem('pastel-booth-theme', els.theme.value); });
 function setEffect(value, broadcast = true) {
@@ -94,22 +98,44 @@ function updateFriendState() {
   if (peers.size === 0) { els.friendVideo.classList.remove('active'); els.friendVideo.srcObject = null; els.friendPlaceholder.classList.remove('hidden'); els.friendTag.classList.add('hidden'); els.friendState.textContent = 'Waiting for someone to join'; setStatus('Booth open · waiting for your person'); }
 }
 async function startCamera() {
-  if (!navigator.mediaDevices?.getUserMedia) { showToast('Camera access needs HTTPS or localhost.'); return; }
+  if (!navigator.mediaDevices?.getUserMedia) { showToast('Camera needs HTTPS. Open the secure https:// site in Chrome.'); return; }
+  els.camera.disabled = true; els.camera.textContent = 'Opening camera…';
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    if (localStream) localStream.getTracks().forEach(track => track.stop());
+    localStream = stream;
     els.selfVideo.srcObject = localStream; els.selfVideo.classList.add('active'); els.selfPlaceholder.classList.add('hidden'); els.selfState.textContent = 'Camera is on';
+    updateMirrorPreview();
     const displayName = els.name.value.trim() || 'you'; els.selfTag.textContent = displayName;
     for (const entry of peers.values()) await entry.transceiver.sender.replaceTrack(localStream.getVideoTracks()[0]);
-    els.camera.innerHTML = '<span>✿</span> Camera is on'; els.camera.disabled = true; els.capture.disabled = false;
-    showToast('Camera on — looking cute already!');
-  } catch (error) { console.error(error); showToast(error.name === 'NotAllowedError' ? 'Please allow camera access in your browser.' : 'Could not start your camera. Check that it is available.'); }
+    els.camera.innerHTML = '<span>✿</span> Camera is on'; els.camera.disabled = false; els.flipCamera.disabled = false; els.capture.disabled = false;
+    showToast(cameraFacing === 'user' ? 'Front camera on — looking cute already!' : 'Back camera on!');
+  } catch (error) {
+    console.error(error); els.camera.disabled = false; els.camera.innerHTML = '<span>📷</span> Try camera again';
+    const messages = { NotAllowedError: 'Camera permission is blocked. In Chrome, tap the site icon → Permissions → Camera → Allow, then reload.', NotFoundError: 'No camera was found on this device.', NotReadableError: 'Camera is busy in another app. Close other camera apps and try again.', OverconstrainedError: 'That camera mode is unavailable. Try switching camera again.' };
+    showToast(messages[error.name] || 'Could not start the camera. Check permissions and close other camera apps.');
+  }
+}
+async function switchCamera() {
+  if (!localStream) { cameraFacing = cameraFacing === 'user' ? 'environment' : 'user'; return startCamera(); }
+  cameraFacing = cameraFacing === 'user' ? 'environment' : 'user';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    const oldStream = localStream; localStream = stream; els.selfVideo.srcObject = stream;
+    for (const entry of peers.values()) await entry.transceiver.sender.replaceTrack(stream.getVideoTracks()[0]);
+    oldStream.getTracks().forEach(track => track.stop()); updateMirrorPreview();
+    showToast(cameraFacing === 'user' ? 'Front camera selected' : 'Back camera selected');
+  } catch (error) { cameraFacing = cameraFacing === 'user' ? 'environment' : 'user'; showToast('Could not switch camera on this device.'); }
 }
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 async function frameSnapshot(video) {
   if (!video || !video.srcObject || video.readyState < 2 || !video.videoWidth) return null;
   const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 420;
   const ctx = canvas.getContext('2d');
-  ctx.save(); ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.filter = effects[els.effect.value].filter; ctx.drawImage(video, 0, 0, canvas.width, canvas.height); ctx.restore();
+  ctx.save();
+  const mirror = video === els.selfVideo ? (els.mirror.checked && cameraFacing === 'user') : false;
+  if (mirror) { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
+  ctx.filter = effects[els.effect.value].filter; ctx.drawImage(video, 0, 0, canvas.width, canvas.height); ctx.restore();
   return canvas;
 }
 function drawPhotoEffect(ctx, x, y, width, height) {
@@ -138,32 +164,41 @@ async function takeStrip(announce = true) {
     if (i > 1) await sleep(750);
   }
   els.overlay.classList.add('hidden');
-  const width = 780, pad = 26, gap = 16, panelH = 430, header = 88, footer = 82;
-  const height = header + shots.length * panelH + (shots.length - 1) * gap + footer;
+  const scale = els.size.value === 'small' ? 0.72 : els.size.value === 'large' ? 1.35 : 1;
+  const layout = els.layout.value;
+  const width = Math.round((layout === 'wide' ? 980 : layout === 'grid' ? 900 : 780) * scale);
+  const pad = Math.round(26 * scale), gap = Math.round(16 * scale), header = Math.round(88 * scale), footer = Math.round(82 * scale);
+  const panelH = Math.round((layout === 'wide' ? 280 : layout === 'grid' ? 300 : 430) * scale);
+  const cols = layout === 'grid' ? 2 : 1, rows = layout === 'grid' ? 2 : 3;
+  const panelW = layout === 'grid' ? Math.round((width - pad * 2 - gap) / 2) : width - pad * 2;
+  const contentTop = header, contentHeight = rows * panelH + (rows - 1) * gap;
+  const height = header + contentHeight + footer;
   const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext('2d');
   const bg = getComputedStyle(document.body).getPropertyValue('--accent-soft').trim() || '#ffe4ef';
   const ink = getComputedStyle(document.body).getPropertyValue('--accent-dark').trim() || '#d85e8b';
   ctx.fillStyle = bg; ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.font = '800 29px Nunito, sans-serif'; ctx.fillText('our little photo booth ♡', width/2, 49);
-  ctx.fillStyle = '#8d748e'; ctx.font = '600 13px "DM Sans", sans-serif'; ctx.fillText(`${roomCode}  ·  ${new Date().toLocaleDateString()}`, width/2, 72);
+  ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.font = `800 ${Math.round(29 * scale)}px Nunito, sans-serif`; ctx.fillText('our little photo booth ♡', width/2, Math.round(49 * scale));
+  ctx.fillStyle = '#8d748e'; ctx.font = `600 ${Math.round(13 * scale)}px \"DM Sans\", sans-serif`; ctx.fillText(`${roomCode}  ·  ${new Date().toLocaleDateString()}`, width/2, Math.round(72 * scale));
   shots.forEach((shot, i) => {
-    const y = header + i * (panelH + gap); ctx.fillStyle = '#fff'; roundedRect(ctx, pad, y, width - pad*2, panelH, 14); ctx.save(); ctx.beginPath(); roundedRectPath(ctx,pad,y,width-pad*2,panelH,14); ctx.clip();
-    const innerX = pad + 10, innerY = y + 10, innerW = width - pad*2 - 20, innerH = panelH - 20;
-    if (shot.remote) { const half = (innerW - 8)/2; if (shot.local) drawCover(ctx, shot.local, innerX, innerY, half, innerH); else drawCover(ctx, shot.remote, innerX, innerY, half, innerH); drawCover(ctx, shot.remote, innerX + half + 8, innerY, half, innerH); }
+    const col = layout === 'grid' ? i % 2 : 0, row = layout === 'grid' ? Math.floor(i / 2) : i;
+    const x = pad + col * (panelW + gap), y = contentTop + row * (panelH + gap);
+    roundedRect(ctx, x, y, panelW, panelH, Math.round(14 * scale)); ctx.save(); ctx.beginPath(); roundedRectPath(ctx,x,y,panelW,panelH,Math.round(14*scale)); ctx.clip();
+    const innerX = x + Math.round(10 * scale), innerY = y + Math.round(10 * scale), innerW = panelW - Math.round(20 * scale), innerH = panelH - Math.round(20 * scale);
+    if (shot.remote) { const half = (innerW - Math.round(8 * scale))/2; if (shot.local) drawCover(ctx, shot.local, innerX, innerY, half, innerH); else drawCover(ctx, shot.remote, innerX, innerY, half, innerH); drawCover(ctx, shot.remote, innerX + half + Math.round(8*scale), innerY, half, innerH); }
     else if (shot.local) drawCover(ctx, shot.local, innerX, innerY, innerW, innerH);
     else { ctx.fillStyle = '#f7eef6'; ctx.fillRect(innerX, innerY, innerW, innerH); }
     drawPhotoEffect(ctx, innerX, innerY, innerW, innerH);
-    ctx.restore(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(width-48,y+32,20,0,Math.PI*2); ctx.fill(); ctx.fillStyle=ink; ctx.font='800 12px "DM Sans", sans-serif'; ctx.fillText(String(i+1),width-48,y+36);
+    ctx.restore(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x+panelW-Math.round(22*scale),y+Math.round(22*scale),Math.round(14*scale),0,Math.PI*2); ctx.fill(); ctx.fillStyle=ink; ctx.font=`800 ${Math.round(12*scale)}px \"DM Sans\", sans-serif`; ctx.fillText(String(i+1),x+panelW-Math.round(22*scale),y+Math.round(26*scale));
   });
-  ctx.fillStyle = ink; ctx.font = '800 19px Nunito, sans-serif'; ctx.fillText('made with love, wherever you are ✿', width/2, height-35);
+  ctx.fillStyle = ink; ctx.font = `800 ${Math.round(19 * scale)}px Nunito, sans-serif`; ctx.fillText('made with love, wherever you are ✿', width/2, height-Math.round(35*scale));
   const data = canvas.toDataURL('image/png'); els.resultImage.src = data; els.download.href = data; els.result.classList.remove('hidden'); els.result.scrollIntoView({ behavior: 'smooth', block: 'center' });
   captureBusy = false; els.capture.disabled = false; showToast('Your photo strip is ready to save! ♡');
 }
 function roundedRectPath(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 function roundedRect(ctx,x,y,w,h,r){ctx.fillStyle='#fff';roundedRectPath(ctx,x,y,w,h,r);ctx.fill();}
 els.join.addEventListener('click', () => { if (socket && socket.readyState !== WebSocket.CLOSED) return; const room = els.room.value.trim() || randomRoom(); setupRoom(room); });
-els.camera.addEventListener('click', startCamera); els.capture.addEventListener('click', takeStrip); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
+els.camera.addEventListener('click', startCamera); els.flipCamera.addEventListener('click', switchCamera); els.capture.addEventListener('click', takeStrip); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
 els.copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(inviteUrl()); showToast('Invite link copied — send it to your person!'); } catch { prompt('Copy your invite link:', inviteUrl()); } });
 els.room.addEventListener('keydown', e => { if (e.key === 'Enter') els.join.click(); });
 const params = new URLSearchParams(location.search); if (params.has('room')) { els.room.value = params.get('room'); }
