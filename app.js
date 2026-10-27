@@ -9,7 +9,9 @@ const effects = {
   vintage: { filter: 'sepia(.3) saturate(.82) contrast(1.08)' },
   mono: { filter: 'grayscale(1) contrast(1.05)' },
   hearts: { filter: 'saturate(1.08)' },
-  prism: { filter: 'saturate(1.22) hue-rotate(14deg)' }
+  prism: { filter: 'saturate(1.22) hue-rotate(14deg)' },
+  puppy: { filter: 'brightness(1.06) saturate(1.13)' },
+  collectible: { filter: 'brightness(1.06) saturate(.92) contrast(.97)' }
 };
 const savedTheme = localStorage.getItem('pastel-booth-theme');
 const savedMirror = localStorage.getItem('pastel-booth-mirror');
@@ -71,11 +73,20 @@ function createPeer(id, name, makeOffer) {
   const entry = { id, name: name || 'Guest', pc, video, transceiver, candidateQueue: [] };
   peers.set(id, entry);
   if (localStream) transceiver.sender.replaceTrack(localStream.getVideoTracks()[0]);
-  pc.ontrack = (event) => {
-    video.srcObject = event.streams[0];
-    const reveal = () => { video.classList.add('active'); els.friendPlaceholder.classList.add('hidden'); els.friendTag.textContent = entry.name; els.friendTag.classList.remove('hidden'); els.friendState.textContent = `${entry.name} is here!`; setStatus('Connected · together at last', 'connected'); };
+  pc.ontrack = async (event) => {
+    // Some browsers omit event.streams; construct a stream from the received track.
+    const remoteStream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
+    video.srcObject = remoteStream;
+    const reveal = async () => {
+      video.classList.add('active'); els.friendPlaceholder.classList.add('hidden');
+      els.friendTag.textContent = entry.name; els.friendTag.classList.remove('hidden');
+      els.friendState.textContent = `${entry.name} is here!`;
+      try { await video.play(); } catch (_) { els.friendState.textContent = 'Tap the guest video to play'; }
+      if (!video.paused) setStatus('Connected · together at last', 'connected');
+    };
     event.track.onunmute = reveal;
-    if (!event.track.muted) reveal();
+    if (!event.track.muted) await reveal();
+    video.onloadedmetadata = () => video.play().catch(() => {});
   };
   pc.onicecandidate = (event) => { if (event.candidate) send({ type: 'signal', to: id, candidate: event.candidate }); };
   pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') { els.friendState.textContent = 'Connection failed'; showToast('Could not connect cameras. Try refreshing or another network.'); } };
@@ -118,9 +129,12 @@ async function startCamera() {
       } else throw firstError;
     }
     localStream = stream;
+    const activeTrack = localStream.getVideoTracks()[0];
+    if (activeTrack) activeTrack.onended = () => { if (localStream && !localStream.getVideoTracks().some(t => t.readyState === 'live')) stopCamera(); };
     els.selfVideo.srcObject = localStream;
     try { await els.selfVideo.play(); } catch (_) { /* autoplay may wait for the next user gesture */ }
     els.selfVideo.classList.add('active'); els.selfPlaceholder.classList.add('hidden');
+    startGestureDetection();
     els.selfState.textContent = 'Camera is on';
     updateMirrorPreview();
     const displayName = els.name.value.trim() || 'you'; els.selfTag.textContent = displayName;
@@ -265,6 +279,49 @@ async function takeStrip(announce = true) {
 }
 function roundedRectPath(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 function roundedRect(ctx,x,y,w,h,r){ctx.fillStyle='#fff';roundedRectPath(ctx,x,y,w,h,r);ctx.fill();}
+
+// Optional MediaPipe hand-gesture stickers. Detection runs locally in the browser.
+let handDetector = null, handDetecting = false, lastGestureAt = 0;
+function floatSticker(emoji, x = 50, y = 34) {
+  const layer = $('selfStickerOverlay'); if (!layer) return;
+  const sticker = document.createElement('span'); sticker.className = 'sticker-float';
+  sticker.textContent = emoji; sticker.style.setProperty('--x', `${Math.max(8, Math.min(82, x))}%`); sticker.style.setProperty('--y', `${Math.max(8, Math.min(72, y))}%`);
+  layer.appendChild(sticker); setTimeout(() => sticker.remove(), 2300);
+}
+function classifyHand(lm) {
+  if (!lm || lm.length < 21) return null;
+  const up = (tip, pip) => lm[tip].y < lm[pip].y - .025;
+  const index = up(8,6), middle = up(12,10), ring = up(16,14), pinky = up(20,18);
+  const thumbOut = Math.abs(lm[4].x-lm[2].x) > .08;
+  if (index && middle && !ring && !pinky) return { key:'peace', emoji:'💖✨' };
+  if (thumbOut && lm[4].y < lm[3].y && !index && !middle && !ring && !pinky) return { key:'thumb', emoji:'💗👍' };
+  if (index && middle && ring && pinky) return { key:'wave', emoji:'💞👋' };
+  const pinch = Math.hypot(lm[4].x-lm[8].x, lm[4].y-lm[8].y) < .07;
+  if (pinch) return { key:'heart', emoji:'💘💋' };
+  return null;
+}
+async function startGestureDetection() {
+  if (handDetecting || !window.Hands || !els.selfVideo) return;
+  handDetecting = true;
+  try {
+    handDetector = new window.Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    handDetector.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: .62, minTrackingConfidence: .55 });
+    handDetector.onResults(results => {
+      const lm = results.multiHandLandmarks && results.multiHandLandmarks[0];
+      const gesture = classifyHand(lm); const now = Date.now();
+      if (gesture && now-lastGestureAt > 1700) { lastGestureAt = now; floatSticker(gesture.emoji, lm ? (1-lm[9].x)*100 : 50, lm ? lm[9].y*100 : 35); }
+    });
+    const scan = async () => {
+      if (!handDetecting) return;
+      if (localStream && els.selfVideo.readyState >= 2 && !els.selfVideo.paused) {
+        try { await handDetector.send({ image: els.selfVideo }); } catch (_) { /* camera may switch while inference is running */ }
+      }
+      requestAnimationFrame(scan);
+    };
+    scan();
+  } catch (error) { console.warn('Gesture stickers unavailable:', error); handDetecting = false; }
+}
+
 els.join.addEventListener('click', () => { if (socket && socket.readyState !== WebSocket.CLOSED) return; const room = els.room.value.trim() || randomRoom(); setupRoom(room); });
 els.camera.addEventListener('click', startCamera); els.flipCamera.addEventListener('click', switchCamera);
 els.soloMode.addEventListener('click', () => selectMode('solo')); els.sharedMode.addEventListener('click', () => selectMode('shared')); els.capture.addEventListener('click', takeStrip); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
