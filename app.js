@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
-const els = { theme: $('themeSelect'), effect: $('effectSelect'), room: $('roomInput'), name: $('nameInput'), join: $('joinButton'), camera: $('cameraButton'), capture: $('captureButton'), pill: $('connectionPill'), status: $('connectionText'), roomBar: $('roomBar'), invite: $('inviteRow'), inviteText: $('inviteText'), copy: $('copyButton'), selfVideo: $('selfVideo'), friendVideo: $('friendVideo'), selfPlaceholder: $('selfPlaceholder'), friendPlaceholder: $('friendPlaceholder'), selfState: $('selfState'), friendState: $('friendState'), selfTag: $('selfNameTag'), friendTag: $('friendNameTag'), toast: $('toast'), overlay: $('countdownOverlay'), count: $('countdownNumber'), result: $('resultCard'), resultImage: $('resultImage'), download: $('downloadButton'), retake: $('retakeButton'), flipCamera: $('flipCameraButton'), mirror: $('mirrorToggle'), layout: $('layoutSelect'), size: $('sizeSelect') };
-let socket, localStream, myId, roomCode, peers = new Map(), captureBusy = false, toastTimer, cameraFacing = 'user';
+const els = { theme: $('themeSelect'), effect: $('effectSelect'), room: $('roomInput'), name: $('nameInput'), join: $('joinButton'), camera: $('cameraButton'), capture: $('captureButton'), pill: $('connectionPill'), status: $('connectionText'), roomBar: $('roomBar'), invite: $('inviteRow'), inviteText: $('inviteText'), copy: $('copyButton'), selfVideo: $('selfVideo'), friendVideo: $('friendVideo'), selfPlaceholder: $('selfPlaceholder'), friendPlaceholder: $('friendPlaceholder'), selfState: $('selfState'), friendState: $('friendState'), selfTag: $('selfNameTag'), friendTag: $('friendNameTag'), toast: $('toast'), overlay: $('countdownOverlay'), count: $('countdownNumber'), result: $('resultCard'), resultImage: $('resultImage'), download: $('downloadButton'), retake: $('retakeButton'), flipCamera: $('flipCameraButton'), mirror: $('mirrorToggle'), layout: $('layoutSelect'), size: $('sizeSelect'), soloMode: $('soloModeButton'), sharedMode: $('sharedModeButton'), modeHint: $('modeHint') };
+let socket, localStream, myId, roomCode, peers = new Map(), captureBusy = false, toastTimer, cameraFacing = 'user', boothMode = 'solo';
 const effects = {
   natural: { filter: 'none' },
   dreamy: { filter: 'brightness(1.08) saturate(1.08) contrast(.96)' },
@@ -36,6 +36,7 @@ function wsUrl() { return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${
 function send(data) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(data)); }
 function inviteUrl() { const u = new URL(location.href); u.searchParams.set('room', roomCode); return u.toString(); }
 function setupRoom(room) {
+  boothMode = 'shared';
   roomCode = roomSlug(room);
   els.room.value = roomCode;
   if (!roomCode) return showToast('Pick a room name first ✿');
@@ -60,7 +61,7 @@ async function handleMessage(msg) {
   else if (msg.type === 'room-event' && msg.event === 'capture') { showToast('Someone started a photo strip — get ready!'); takeStrip(false); }
   else if (msg.type === 'room-event' && msg.event === 'effect') { setEffect(msg.value, false); showToast('Photo effect updated for everyone ✨'); }
   else if (msg.type === 'peer-left') { const entry = peers.get(msg.id); if (entry) { entry.pc.close(); entry.video.remove(); peers.delete(msg.id); } updateFriendState(); showToast(`${msg.name} left the booth`); }
-  else if (msg.type === 'error') showToast(msg.message);
+  else if (msg.type === 'error') { showToast(msg.message); els.join.disabled = false; els.join.innerHTML = '<span>♡</span> Create / join booth'; }
 }
 function createPeer(id, name, makeOffer) {
   if (peers.has(id)) return peers.get(id);
@@ -98,29 +99,96 @@ function updateFriendState() {
   if (peers.size === 0) { els.friendVideo.classList.remove('active'); els.friendVideo.srcObject = null; els.friendPlaceholder.classList.remove('hidden'); els.friendTag.classList.add('hidden'); els.friendState.textContent = 'Waiting for someone to join'; setStatus('Booth open · waiting for your person'); }
 }
 async function startCamera() {
-  if (!navigator.mediaDevices?.getUserMedia) { showToast('Camera needs HTTPS. Open the secure https:// site in Chrome.'); return; }
+  // This button is deliberately available before joining a room so the user can grant permission.
+  if (localStream) { stopCamera(); return; }
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    showToast('Camera access needs a secure HTTPS address. Open the live site in Chrome, not an in-app preview.');
+    els.selfState.textContent = 'HTTPS required';
+    return;
+  }
   els.camera.disabled = true; els.camera.textContent = 'Opening camera…';
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-    if (localStream) localStream.getTracks().forEach(track => track.stop());
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    } catch (firstError) {
+      // Some mobile browsers reject advanced constraints; retry with a plain video request.
+      if (firstError.name === 'OverconstrainedError' || firstError.name === 'NotFoundError') {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      } else throw firstError;
+    }
     localStream = stream;
-    els.selfVideo.srcObject = localStream; els.selfVideo.classList.add('active'); els.selfPlaceholder.classList.add('hidden'); els.selfState.textContent = 'Camera is on';
+    els.selfVideo.srcObject = localStream;
+    try { await els.selfVideo.play(); } catch (_) { /* autoplay may wait for the next user gesture */ }
+    els.selfVideo.classList.add('active'); els.selfPlaceholder.classList.add('hidden');
+    els.selfState.textContent = 'Camera is on';
     updateMirrorPreview();
     const displayName = els.name.value.trim() || 'you'; els.selfTag.textContent = displayName;
     for (const entry of peers.values()) await entry.transceiver.sender.replaceTrack(localStream.getVideoTracks()[0]);
-    els.camera.innerHTML = '<span>✿</span> Camera is on'; els.camera.disabled = false; els.flipCamera.disabled = false; els.capture.disabled = false;
-    showToast(cameraFacing === 'user' ? 'Front camera on — looking cute already!' : 'Back camera on!');
+    els.camera.innerHTML = '<span>◯</span> Turn camera off'; els.camera.setAttribute('aria-pressed', 'true');
+    els.camera.disabled = false; els.flipCamera.disabled = false; els.capture.disabled = false;
+    showToast(cameraFacing === 'user' ? 'Front camera is on ♡' : 'Back camera is on ♡');
   } catch (error) {
-    console.error(error); els.camera.disabled = false; els.camera.innerHTML = '<span>📷</span> Try camera again';
-    const messages = { NotAllowedError: 'Camera permission is blocked. In Chrome, tap the site icon → Permissions → Camera → Allow, then reload.', NotFoundError: 'No camera was found on this device.', NotReadableError: 'Camera is busy in another app. Close other camera apps and try again.', OverconstrainedError: 'That camera mode is unavailable. Try switching camera again.' };
-    showToast(messages[error.name] || 'Could not start the camera. Check permissions and close other camera apps.');
+    console.error('Camera start failed:', error);
+    els.camera.disabled = false; els.camera.innerHTML = '<span>📷</span> Try camera again';
+    els.camera.setAttribute('aria-pressed', 'false'); els.selfState.textContent = 'Camera off';
+    const messages = {
+      NotAllowedError: 'Camera permission was denied. Tap the site icon in Chrome → Permissions → Camera → Allow, then reload.',
+      SecurityError: 'Your browser blocked camera access. Open the HTTPS website directly in Chrome.',
+      NotFoundError: 'No available camera was found on this device.',
+      NotReadableError: 'The camera is busy. Close Camera, video-call, or scanning apps, then try again.',
+      OverconstrainedError: 'This camera mode is unavailable. Try switching camera.',
+      AbortError: 'The camera could not start. Close other camera apps and try again.'
+    };
+    showToast(messages[error.name] || `Could not open camera (${error.name || 'unknown error'}). Check site permissions and try again.`);
+  }
+}
+function stopCamera() {
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  els.selfVideo.pause(); els.selfVideo.srcObject = null;
+  els.selfVideo.classList.remove('active'); els.selfPlaceholder.classList.remove('hidden');
+  els.selfState.textContent = 'Camera off';
+  for (const entry of peers.values()) entry.transceiver.sender.replaceTrack(null).catch(() => {});
+  els.camera.disabled = false; els.camera.innerHTML = '<span>📷</span> Turn camera on';
+  els.camera.setAttribute('aria-pressed', 'false'); els.flipCamera.disabled = true; els.capture.disabled = true;
+  showToast('Camera is off. Your camera is no longer being used.');
+}
+function selectMode(mode) {
+  boothMode = mode;
+  document.body.dataset.mode = mode;
+  const shared = mode === 'shared';
+  els.soloMode.classList.toggle('is-selected', !shared);
+  els.sharedMode.classList.toggle('is-selected', shared);
+  els.soloMode.setAttribute('aria-pressed', String(!shared));
+  els.sharedMode.setAttribute('aria-pressed', String(shared));
+  els.roomBar.classList.toggle('hidden', !shared || Boolean(myId));
+  els.invite.classList.toggle('hidden', !shared || !myId);
+  els.modeHint.textContent = shared
+    ? 'Create a room, share its link, and both people can turn on their cameras.'
+    : 'Solo mode is ready. Turn on your camera to take photos by yourself.';
+  els.capture.innerHTML = shared ? '<span>✧</span> Take our photos' : '<span>✧</span> Take my photos';
+  if (!shared && socket && socket.readyState !== WebSocket.CLOSED) {
+    socket.close(); socket = null; myId = null; roomCode = null;
+    for (const entry of peers.values()) entry.pc.close();
+    peers.clear(); els.friendVideo.srcObject = null; els.friendVideo.classList.remove('active');
+    els.friendPlaceholder.classList.remove('hidden'); els.friendTag.classList.add('hidden');
+    els.friendState.textContent = 'Solo mode'; setStatus('Solo booth', '');
+    els.join.disabled = false; els.join.innerHTML = '<span>♡</span> Create / join booth';
+  } else if (!shared) {
+    els.friendState.textContent = 'Solo mode'; setStatus('Solo booth', '');
+  } else {
+    els.friendState.textContent = 'Waiting for someone to join';
+    if (!myId) setStatus('Not connected yet');
   }
 }
 async function switchCamera() {
   if (!localStream) { cameraFacing = cameraFacing === 'user' ? 'environment' : 'user'; return startCamera(); }
   cameraFacing = cameraFacing === 'user' ? 'environment' : 'user';
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    let stream; try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: cameraFacing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }); } catch (_) { stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
     const oldStream = localStream; localStream = stream; els.selfVideo.srcObject = stream;
     for (const entry of peers.values()) await entry.transceiver.sender.replaceTrack(stream.getVideoTracks()[0]);
     oldStream.getTracks().forEach(track => track.stop()); updateMirrorPreview();
@@ -155,7 +223,7 @@ function drawCover(ctx, image, x, y, w, h) {
 }
 async function takeStrip(announce = true) {
   if (captureBusy || !localStream) return; captureBusy = true; els.capture.disabled = true; els.result.classList.add('hidden');
-  if (announce) send({ type: 'room-event', event: 'capture' });
+  if (announce && boothMode === 'shared' && myId) send({ type: 'room-event', event: 'capture' });
   const shots = [];
   for (let i = 3; i > 0; i--) {
     els.overlay.classList.remove('hidden'); els.count.textContent = String(i); await sleep(850);
@@ -179,7 +247,7 @@ async function takeStrip(announce = true) {
   const ink = getComputedStyle(document.body).getPropertyValue('--accent-dark').trim() || '#d85e8b';
   ctx.fillStyle = bg; ctx.fillRect(0, 0, width, height);
   ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.font = `800 ${Math.round(29 * scale)}px Nunito, sans-serif`; ctx.fillText('our little photo booth ♡', width/2, Math.round(49 * scale));
-  ctx.fillStyle = '#8d748e'; ctx.font = `600 ${Math.round(13 * scale)}px \"DM Sans\", sans-serif`; ctx.fillText(`${roomCode}  ·  ${new Date().toLocaleDateString()}`, width/2, Math.round(72 * scale));
+  ctx.fillStyle = '#8d748e'; ctx.font = `600 ${Math.round(13 * scale)}px \"DM Sans\", sans-serif`; ctx.fillText(`${roomCode || 'SOLO BOOTH'}  ·  ${new Date().toLocaleDateString()}`, width/2, Math.round(72 * scale));
   shots.forEach((shot, i) => {
     const col = layout === 'grid' ? i % 2 : 0, row = layout === 'grid' ? Math.floor(i / 2) : i;
     const x = pad + col * (panelW + gap), y = contentTop + row * (panelH + gap);
@@ -198,8 +266,12 @@ async function takeStrip(announce = true) {
 function roundedRectPath(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 function roundedRect(ctx,x,y,w,h,r){ctx.fillStyle='#fff';roundedRectPath(ctx,x,y,w,h,r);ctx.fill();}
 els.join.addEventListener('click', () => { if (socket && socket.readyState !== WebSocket.CLOSED) return; const room = els.room.value.trim() || randomRoom(); setupRoom(room); });
-els.camera.addEventListener('click', startCamera); els.flipCamera.addEventListener('click', switchCamera); els.capture.addEventListener('click', takeStrip); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
+els.camera.addEventListener('click', startCamera); els.flipCamera.addEventListener('click', switchCamera);
+els.soloMode.addEventListener('click', () => selectMode('solo')); els.sharedMode.addEventListener('click', () => selectMode('shared')); els.capture.addEventListener('click', takeStrip); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
 els.copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(inviteUrl()); showToast('Invite link copied — send it to your person!'); } catch { prompt('Copy your invite link:', inviteUrl()); } });
 els.room.addEventListener('keydown', e => { if (e.key === 'Enter') els.join.click(); });
-const params = new URLSearchParams(location.search); if (params.has('room')) { els.room.value = params.get('room'); }
+const params = new URLSearchParams(location.search);
+if (params.has('room')) { els.room.value = params.get('room'); selectMode('shared'); } else { selectMode('solo'); }
+els.camera.disabled = false; els.camera.setAttribute('aria-pressed', 'false');
+els.selfState.textContent = 'Camera off';
 window.addEventListener('beforeunload', () => { for (const e of peers.values()) e.pc.close(); if (socket) socket.close(); if (localStream) localStream.getTracks().forEach(t => t.stop()); });

@@ -44,3 +44,12 @@ The app uses WebSockets for signaling, so use a host that supports persistent We
 - Camera video is sent peer-to-peer using WebRTC; the server relays signaling messages, not the camera stream.
 - The app uses a public STUN server. Some restrictive networks require a TURN relay for reliable video calls.
 - Anyone with a room link/code can attempt to join an open room. Avoid guessable room names for private sessions.
+
+
+## Camera and booth modes
+
+- The camera button is available before joining a room. Tap **Turn camera on** to request browser permission; tap **Turn camera off** to stop the camera tracks.
+- Camera access requires HTTPS (Render provides HTTPS for deployed services) or localhost during development. Open the deployed page directly in Chrome, not inside an app's embedded browser.
+- If permission was blocked, open Chrome site settings for the site, set Camera to Allow, then reload the page. Close other apps that may be using the camera.
+- **Solo booth** lets you take and save a photo strip without creating a room. **With someone** lets you create a room and share its invite link.
+- On mobile, controls wrap into a two-column layout and the footer respects the device's safe-area inset.
