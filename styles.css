@@ -135,3 +135,14 @@ body:before{left:3vw;top:28vh}body:after{content:'♡';right:4vw;top:66vh;font-s
 .page-shell{position:relative;z-index:1}
 @keyframes pastel-float{0%,100%{transform:translate3d(0,0,0) rotate(0deg)}50%{transform:translate3d(0,-16px,0) rotate(12deg)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+
+/* Inversion applies consistently to every camera preview, including the local selfie. */
+video.mirror-preview{transform:scaleX(-1)!important}
+/* Non-blocking countdown: keep the center of the screen and the mirror visible. */
+.countdown-overlay{inset:82px 14px auto auto;width:auto;height:auto;background:transparent;backdrop-filter:none;display:block;pointer-events:none;z-index:15}
+.countdown-bubble{width:104px;height:104px;border-radius:28px;background:rgba(255,249,252,.94);border:1px solid rgba(255,255,255,.8);box-shadow:0 8px 28px rgba(49,31,53,.18);gap:2px;animation:bob 1.3s ease-in-out infinite}
+.countdown-bubble span{font-size:8px;text-align:center;padding:0 6px}
+.countdown-bubble strong{font-size:42px;line-height:1}
+.countdown-bubble small{font-size:8px;text-align:center;padding:0 8px}
+body[data-dark="true"] .countdown-bubble{background:rgba(53,41,62,.95);border-color:var(--line)}
+@media(max-width:600px){.countdown-overlay{top:78px;right:10px}.countdown-bubble{width:88px;height:88px;border-radius:23px}.countdown-bubble strong{font-size:35px}.countdown-bubble span,.countdown-bubble small{font-size:7px}}

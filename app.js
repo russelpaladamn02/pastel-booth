@@ -57,7 +57,7 @@ async function refreshCameraOptions(preferredId = '') {
 
 const savedMirror = localStorage.getItem('pastel-booth-mirror');
 els.mirror.checked = savedMirror === null ? true : savedMirror === 'true';
-function updateMirrorPreview() { els.selfVideo.classList.toggle('mirror-preview', els.mirror.checked && cameraFacing === 'user'); }
+function updateMirrorPreview() { els.selfVideo.classList.toggle('mirror-preview', els.mirror.checked); }
 els.mirror.addEventListener('change', () => { localStorage.setItem('pastel-booth-mirror', String(els.mirror.checked)); updateMirrorPreview(); });
 if (savedTheme && ['cotton','peach','mint','dreamy'].includes(savedTheme)) { document.body.dataset.theme = savedTheme; els.theme.value = savedTheme; }
 els.theme.addEventListener('change', () => { document.body.dataset.theme = els.theme.value; localStorage.setItem('pastel-booth-theme', els.theme.value); });
@@ -189,7 +189,9 @@ async function frameSnapshot(video) {
   canvas.width = Math.max(1, Math.round(sourceW * scale)); canvas.height = Math.max(1, Math.round(sourceH * scale));
   const ctx = canvas.getContext('2d');
   ctx.save();
-  ctx.filter = effects[els.effect.value].filter; ctx.drawImage(video, 0, 0, canvas.width, canvas.height); ctx.restore();
+  ctx.filter = effects[els.effect.value].filter;
+  if (video === els.selfVideo && els.mirror?.checked) { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height); ctx.restore();
   return canvas;
 }
 function drawPhotoEffect(ctx, x, y, width, height) {
@@ -279,37 +281,80 @@ function renderStrip() {
   ctx.fillStyle=ink;ctx.textAlign='center';ctx.font=`800 ${Math.round(19*scale)}px Nunito,sans-serif`;ctx.fillText(style==='spooky'?'TRICK OR TREAT ✦':style==='candycane'?'wrapped in holiday magic ✿':'made with love, wherever you are ✿',width/2,height-Math.round(35*scale));
   const data=canvas.toDataURL('image/png');els.resultImage.src=data;els.download.href=data;els.download.download=`pastel-booth-${style}-${Date.now()}.png`;
 }
-async function takeStrip(announce = true) {
-  if(captureBusy||!localStream)return;
-  captureBusy=true;els.capture.disabled=true;els.result.classList.add('hidden');capturedShots=[];
-  const count=Math.max(3,Math.min(5,Number(chosenValue(els.shotCount,3))||3));
-  if(els.shotsBadge)els.shotsBadge.textContent=String(count);
-  if(announce)send({type:'room-event',event:'capture'});
-  try {
-    for(let shotIndex=0;shotIndex<count;shotIndex++){
-      els.overlay.classList.remove('hidden');
-      const label=$('countdownLabel');if(label)label.textContent=`photo ${shotIndex+1} of ${count}`;
-      for(let second=3;second>=1;second--){els.count.textContent=String(second);await sleep(1000);}
-      const local=await frameSnapshot(els.selfVideo),remote=await frameSnapshot(els.friendVideo);
-      capturedShots.push({local,remote});
-      els.count.textContent=shotIndex===count-1?'✦':'✓';await sleep(220);
-    }
-    els.overlay.classList.add('hidden');
-    if(els.stripLayoutEdit)els.stripLayoutEdit.value=chosenValue(els.layout,'classic');
-    if(els.stripSizeEdit)els.stripSizeEdit.value=chosenValue(els.size,'standard');
-    if(els.stripMirror)els.stripMirror.value='mirror';
-    renderStrip();els.result.classList.remove('hidden');els.result.scrollIntoView({behavior:'smooth',block:'start'});
-    showToast('Your photos are ready! Choose a style before downloading ♡');
-  } catch(err){console.error(err);els.overlay.classList.add('hidden');showToast('Could not finish the photo strip. Please try again.');}
-  finally{captureBusy=false;els.capture.disabled=false;}
+let captureSession = null;
+function setCaptureButtonReady(ready, shotIndex = 0, total = 0) {
+  if (ready) {
+    els.capture.disabled = false;
+    els.capture.innerHTML = `<span>✧</span> Capture photo ${shotIndex + 1} of ${total}`;
+  } else {
+    els.capture.disabled = true;
+    els.capture.innerHTML = '<span>⏳</span> Get ready…';
+  }
 }
+async function takeStrip(announce = true) {
+  // During a strip, the next click confirms the photo after the countdown.
+  if (captureBusy) {
+    if (captureSession?.waiting && captureSession.resolve) {
+      captureSession.waiting = false;
+      captureSession.resolve();
+      captureSession.resolve = null;
+    }
+    return;
+  }
+  if (!localStream) return;
+  captureBusy = true;
+  captureSession = { waiting: false, resolve: null };
+  els.result.classList.add('hidden');
+  capturedShots = [];
+  const count = Math.max(3, Math.min(5, Number(chosenValue(els.shotCount, 3)) || 3));
+  if (els.shotsBadge) els.shotsBadge.textContent = String(count);
+  if (announce) send({ type: 'room-event', event: 'capture' });
+  try {
+    for (let shotIndex = 0; shotIndex < count; shotIndex++) {
+      els.overlay.classList.remove('hidden');
+      const label = $('countdownLabel');
+      if (label) label.textContent = `Get ready · photo ${shotIndex + 1} of ${count}`;
+      for (let second = 3; second >= 1; second--) {
+        els.count.textContent = String(second);
+        await sleep(1000);
+      }
+      els.overlay.classList.add('hidden');
+      setCaptureButtonReady(true, shotIndex, count);
+      showToast(`Ready for photo ${shotIndex + 1}! Tap Capture photo when you are posed ♡`);
+      await new Promise(resolve => { captureSession.waiting = true; captureSession.resolve = resolve; });
+      setCaptureButtonReady(false);
+      const local = await frameSnapshot(els.selfVideo);
+      const remote = await frameSnapshot(els.friendVideo);
+      capturedShots.push({ local, remote });
+      if (shotIndex < count - 1) await sleep(250);
+    }
+    if (els.stripLayoutEdit) els.stripLayoutEdit.value = chosenValue(els.layout, 'classic');
+    if (els.stripSizeEdit) els.stripSizeEdit.value = chosenValue(els.size, 'standard');
+    if (els.stripMirror) els.stripMirror.value = 'normal';
+    renderStrip();
+    els.result.classList.remove('hidden');
+    els.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showToast('Your photos are ready! Choose a style before downloading ♡');
+  } catch (err) {
+    console.error(err);
+    els.overlay.classList.add('hidden');
+    showToast('Could not finish the photo strip. Please try again.');
+  } finally {
+    els.overlay.classList.add('hidden');
+    captureBusy = false;
+    captureSession = null;
+    els.capture.disabled = !localStream;
+    setBoothMode(boothMode);
+  }
+}
+
 for(const control of [els.stripMirror,els.stripStyle,els.stripLayoutEdit,els.stripSizeEdit])if(control)control.addEventListener('change',()=>{if(control===els.stripStyle)document.body.dataset.season=control.value;renderStrip();});
 function roundedRectPath(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 function roundedRect(ctx,x,y,w,h,r){ctx.fillStyle='#fff';roundedRectPath(ctx,x,y,w,h,r);ctx.fill();}
 els.join.addEventListener('click', () => { setBoothMode('shared'); if (socket && socket.readyState !== WebSocket.CLOSED) return; const room = els.room.value.trim() || randomRoom(); setupRoom(room); });
 if(els.shotCount)els.shotCount.addEventListener('change',()=>{if(els.shotsBadge)els.shotsBadge.textContent=els.shotCount.value;});
 els.camera.addEventListener('click', startCamera); els.flipCamera.addEventListener('click', switchCamera); if (els.cameraSelect) els.cameraSelect.addEventListener('change', selectCamera);
-if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', () => refreshCameraOptions()); els.capture.addEventListener('click', takeStrip); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
+if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', () => refreshCameraOptions()); els.capture.addEventListener('click', () => takeStrip(true)); els.retake.addEventListener('click', () => { els.result.classList.add('hidden'); els.capture.scrollIntoView({ behavior:'smooth', block:'center' }); });
 els.copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(inviteUrl()); showToast('Invite link copied — send it to your person!'); } catch { prompt('Copy your invite link:', inviteUrl()); } });
 els.room.addEventListener('keydown', e => { if (e.key === 'Enter') els.join.click(); });
 const params = new URLSearchParams(location.search); if (params.has('room')) { els.room.value = params.get('room'); }
